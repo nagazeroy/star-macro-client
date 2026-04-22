@@ -5,26 +5,62 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local PlaceID = game.PlaceId
 
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1496537416356335626/uxX18rqqSu6JcIo4QeXXF-pXijzjq2P-bpEFUOMMeUZfX0m8AxXsVnvjce3rv-goY3tw"
+local function getRequestFunction()
+    return request
+        or http_request
+        or (syn and syn.request)
+        or (fluxus and fluxus.request)
+end
+
+local requestFunction = getRequestFunction()
+if not requestFunction then
+    return
+end
+
+local librarySource = requestFunction({
+    Method = "GET",
+    Url = "https://wednesday.wtf/library.lua"
+})
+
+local library = loadstring(librarySource.Body)()
+
+local window = library:new_window("vicious hopper", nil, nil)
+
+local main_tab = window:new_tab("main")
+local settings_tab = window:new_tab("settings")
+
+library:apply_settings(settings_tab)
+
+local automation_group = main_tab:new_group("automation", false)
+local webhook_group = main_tab:new_group("webhook", true)
+local utility_group = main_tab:new_group("utility", false)
 
 local FOLDER_NAME = "star_macro"
 local SAVE_FILE = FOLDER_NAME .. "/NotSameServers.json"
 
-local CHECK_DURATION = 3      -- temps total de check dans le serveur
-local CHECK_INTERVAL = 0.5    -- fréquence de check pendant CHECK_DURATION
-local RETRY_DELAY = 2         -- attente si aucun serveur trouvé
-local MAX_PAGES = 10          -- nombre de pages max à scanner
+local Settings = {
+    Enabled = false,
+    WebhookEnabled = true,
+    WebhookURL = "https://discord.com/api/webhooks/1496537416356335626/uxX18rqqSu6JcIo4QeXXF-pXijzjq2P-bpEFUOMMeUZfX0m8AxXsVnvjce3rv-goY3tw",
+    CheckDuration = 3,
+    CheckInterval = 0.5,
+    RetryDelay = 2,
+    MaxPages = 10,
+    ResetVisitedHourly = true
+}
 
 local AllIDs = {}
 local VisitedIDs = {}
 local foundAnything = ""
-
 local lastWebhookJobId = nil
+local loopRunning = false
 
 local function ensureFolder()
-    if not isfolder(FOLDER_NAME) then
-        makefolder(FOLDER_NAME)
-    end
+    pcall(function()
+        if not isfolder(FOLDER_NAME) then
+            makefolder(FOLDER_NAME)
+        end
+    end)
 end
 
 local function getCurrentHour()
@@ -39,7 +75,9 @@ local function rebuildVisitedMap()
 end
 
 local function saveServerList()
-    writefile(SAVE_FILE, HttpService:JSONEncode(AllIDs))
+    pcall(function()
+        writefile(SAVE_FILE, HttpService:JSONEncode(AllIDs))
+    end)
 end
 
 local function loadServerList()
@@ -57,7 +95,18 @@ local function loadServerList()
     rebuildVisitedMap()
 end
 
+local function resetVisitedServers()
+    foundAnything = ""
+    AllIDs = { getCurrentHour() }
+    rebuildVisitedMap()
+    saveServerList()
+end
+
 local function resetServerListIfHourChanged()
+    if not Settings.ResetVisitedHourly then
+        return
+    end
+
     local currentHour = getCurrentHour()
 
     if tonumber(AllIDs[1]) ~= currentHour then
@@ -69,7 +118,6 @@ local function resetServerListIfHourChanged()
         saveServerList()
         rebuildVisitedMap()
         foundAnything = ""
-        print("[DEBUG] Server list reset")
     end
 end
 
@@ -109,34 +157,29 @@ local function findAvailableServer(maxPages)
     local currentJobId = game.JobId
     local cursor = foundAnything
 
-    for page = 1, maxPages do
-        print("[DEBUG] Scanning page:", page)
-
+    for _ = 1, maxPages do
         local site = getServerPage(cursor)
         if not site or not site.data then
-            warn("[DEBUG] Failed to load server page:", page)
-            task.wait(0.3)
-            continue
-        end
-
-        for _, server in ipairs(site.data) do
-            local serverId = tostring(server.id)
-            local playing = tonumber(server.playing) or 0
-            local maxPlayers = tonumber(server.maxPlayers) or 0
-
-            if serverId ~= currentJobId and playing < maxPlayers and not hasServerBeenVisited(serverId) then
-                foundAnything = site.nextPageCursor or ""
-                print("[DEBUG] Found server:", serverId, "(" .. playing .. "/" .. maxPlayers .. ")")
-                return serverId
-            end
-        end
-
-        if site.nextPageCursor and site.nextPageCursor ~= "null" then
-            cursor = site.nextPageCursor
-            foundAnything = cursor
+            task.wait(0.25)
         else
-            foundAnything = ""
-            break
+            for _, server in ipairs(site.data) do
+                local serverId = tostring(server.id)
+                local playing = tonumber(server.playing) or 0
+                local maxPlayers = tonumber(server.maxPlayers) or 0
+
+                if serverId ~= currentJobId and playing < maxPlayers and not hasServerBeenVisited(serverId) then
+                    foundAnything = site.nextPageCursor or ""
+                    return serverId
+                end
+            end
+
+            if site.nextPageCursor and site.nextPageCursor ~= "null" then
+                cursor = site.nextPageCursor
+                foundAnything = cursor
+            else
+                foundAnything = ""
+                break
+            end
         end
 
         task.wait(0.1)
@@ -148,23 +191,16 @@ end
 local function hopServer()
     resetServerListIfHourChanged()
 
-    local serverId = findAvailableServer(MAX_PAGES)
+    local serverId = findAvailableServer(Settings.MaxPages)
     if not serverId then
-        warn("[DEBUG] Failed to find server to hop")
         return false
     end
 
     markServerVisited(serverId)
-    print("[DEBUG] Teleporting to:", serverId)
 
-    local success, err = pcall(function()
+    pcall(function()
         TeleportService:TeleportToPlaceInstance(PlaceID, serverId, LocalPlayer)
     end)
-
-    if not success then
-        warn("[DEBUG] Teleport failed:", err)
-        return false
-    end
 
     return true
 end
@@ -185,28 +221,23 @@ local function scanViciousForDuration(duration, interval)
         if hasVicious() then
             return true
         end
+
         task.wait(interval)
     end
 
     return false
 end
 
-local function getRequestFunction()
-    return request
-        or http_request
-        or (syn and syn.request)
-        or (fluxus and fluxus.request)
-end
-
 local function sendDiscordWebhook(isVicious)
-    local req = getRequestFunction()
-    if not req then
-        warn("[WEBHOOK] No request function available")
+    if not Settings.WebhookEnabled then
+        return false
+    end
+
+    if not Settings.WebhookURL or Settings.WebhookURL == "" then
         return false
     end
 
     local color = isVicious and 65280 or 16711680
-
     local embed = {
         title = "Vicious Status",
         description = string.format("`Vicious : %s`", tostring(isVicious)),
@@ -245,9 +276,9 @@ local function sendDiscordWebhook(isVicious)
         embeds = { embed }
     })
 
-    local success, response = pcall(function()
-        return req({
-            Url = WEBHOOK_URL,
+    local success = pcall(function()
+        requestFunction({
+            Url = Settings.WebhookURL,
             Method = "POST",
             Headers = {
                 ["Content-Type"] = "application/json"
@@ -256,37 +287,161 @@ local function sendDiscordWebhook(isVicious)
         })
     end)
 
-    if success then
-        print("[WEBHOOK] Envoyé :", isVicious)
-        return true
-    else
-        warn("[WEBHOOK] Erreur :", response)
-        return false
+    return success
+end
+
+local function startLoop()
+    if loopRunning then
+        return
     end
+
+    loopRunning = true
+
+    task.spawn(function()
+        while Settings.Enabled do
+            local currentJobId = game.JobId
+
+            if lastWebhookJobId ~= currentJobId then
+                local isVicious = scanViciousForDuration(Settings.CheckDuration, Settings.CheckInterval)
+                sendDiscordWebhook(isVicious)
+                lastWebhookJobId = currentJobId
+            end
+
+            if not Settings.Enabled then
+                break
+            end
+
+            local hopped = hopServer()
+
+            if not hopped then
+                task.wait(Settings.RetryDelay)
+            else
+                task.wait(0.2)
+            end
+        end
+
+        loopRunning = false
+    end)
 end
 
 ensureFolder()
 loadServerList()
 
-while true do
-    local currentJobId = game.JobId
+automation_group:new_checkbox("enable_hopper", {
+    text = "Enable Hopper",
+    default = Settings.Enabled,
+    callback = function(state)
+        Settings.Enabled = state
+        if state then
+            startLoop()
+        end
+    end
+})
 
-    -- Envoie le webhook une seule fois par serveur
-    if lastWebhookJobId ~= currentJobId then
-        local isVicious = scanViciousForDuration(CHECK_DURATION, CHECK_INTERVAL)
-        print("[DEBUG] Vicious:", isVicious, "| JobId:", currentJobId)
+automation_group:new_slider("check_duration", {
+    text = "Check Duration",
+    min = 0,
+    max = 15,
+    default = Settings.CheckDuration,
+    decimals = 1,
+    suffix = " sec",
+    callback = function(state)
+        Settings.CheckDuration = tonumber(state) or Settings.CheckDuration
+    end
+})
 
+automation_group:new_slider("check_interval", {
+    text = "Check Interval",
+    min = 0.1,
+    max = 5,
+    default = Settings.CheckInterval,
+    decimals = 1,
+    suffix = " sec",
+    callback = function(state)
+        Settings.CheckInterval = tonumber(state) or Settings.CheckInterval
+    end
+})
+
+automation_group:new_slider("retry_delay", {
+    text = "Retry Delay",
+    min = 1,
+    max = 15,
+    default = Settings.RetryDelay,
+    decimals = 0,
+    suffix = " sec",
+    callback = function(state)
+        Settings.RetryDelay = tonumber(state) or Settings.RetryDelay
+    end
+})
+
+automation_group:new_slider("max_pages", {
+    text = "Max Pages",
+    min = 1,
+    max = 30,
+    default = Settings.MaxPages,
+    decimals = 0,
+    callback = function(state)
+        Settings.MaxPages = tonumber(state) or Settings.MaxPages
+    end
+})
+
+automation_group:new_checkbox("reset_hourly", {
+    text = "Reset Visited Hourly",
+    default = Settings.ResetVisitedHourly,
+    callback = function(state)
+        Settings.ResetVisitedHourly = state
+    end
+})
+
+webhook_group:new_checkbox("enable_webhook", {
+    text = "Enable Webhook",
+    default = Settings.WebhookEnabled,
+    callback = function(state)
+        Settings.WebhookEnabled = state
+    end
+})
+
+webhook_group:new_textbox("webhook_url", {
+    text = "Webhook URL",
+    default = Settings.WebhookURL,
+    callback = function(state)
+        Settings.WebhookURL = tostring(state or "")
+    end
+})
+
+webhook_group:new_button({
+    text = "Send True Test",
+    callback = function()
+        sendDiscordWebhook(true)
+    end
+})
+
+webhook_group:new_button({
+    text = "Send False Test",
+    callback = function()
+        sendDiscordWebhook(false)
+    end
+})
+
+webhook_group:new_button({
+    text = "Send Current Server Status",
+    callback = function()
+        local isVicious = hasVicious()
         sendDiscordWebhook(isVicious)
-        lastWebhookJobId = currentJobId
-    else
-        print("[DEBUG] Same server, webhook already sent for JobId:", currentJobId)
     end
+})
 
-    -- Même si Vicious = true, on hop quand même
-    local ok = hopServer()
-
-    if not ok then
-        warn("[DEBUG] Hop failed, staying on same server. No new webhook will be sent.")
-        task.wait(RETRY_DELAY)
+utility_group:new_button({
+    text = "Reset Visited Servers",
+    callback = function()
+        resetVisitedServers()
+        lastWebhookJobId = nil
     end
-end
+})
+
+utility_group:new_button({
+    text = "Reload Visited File",
+    callback = function()
+        loadServerList()
+    end
+})
