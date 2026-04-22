@@ -181,6 +181,32 @@ local function getRequestFunction()
         or (fluxus and fluxus.request)
 end
 
+local function highlightVicious()
+    local particles = workspace:FindFirstChild("Particles")
+    if not particles then
+        return
+    end
+
+    local vicious = particles:FindFirstChild("Vicious")
+    if not vicious then
+        return
+    end
+
+    -- évite de recréer plusieurs highlights
+    if vicious:FindFirstChild("ViciousHighlight") then
+        return
+    end
+
+    local hl = Instance.new("Highlight")
+    hl.Name = "ViciousHighlight"
+    hl.FillColor = Color3.fromRGB(0, 255, 0)
+    hl.OutlineColor = Color3.fromRGB(0, 100, 0)
+    hl.FillTransparency = 0.35
+    hl.OutlineTransparency = 0
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Parent = vicious
+end
+
 local function sendDiscordWebhook(isVicious)
     local req = getRequestFunction()
     if not req then
@@ -266,6 +292,7 @@ while true do
 
     -- recheck juste avant hop
     if hasVicious() then
+        highlightVicious()
         sendDiscordWebhook(true)
         print("[DEBUG] VICIOUS FOUND before hop")
         break
