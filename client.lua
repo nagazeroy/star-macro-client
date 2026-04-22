@@ -12,7 +12,7 @@ local SAVE_FILE = FOLDER_NAME .. "/NotSameServers.json"
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1496537416356335626/uxX18rqqSu6JcIo4QeXXF-pXijzjq2P-bpEFUOMMeUZfX0m8AxXsVnvjce3rv-goY3tw"
 
 local CHECK_INTERVAL = 2
-local WAIT_BEFORE_HOP = 10
+local WAIT_BEFORE_HOP = 2
 local MAX_PAGES = 10
 
 local AllIDs = {}
