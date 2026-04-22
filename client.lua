@@ -4,19 +4,22 @@ local Players = game:GetService("Players")
 
 local LocalPlayer = Players.LocalPlayer
 local PlaceID = game.PlaceId
-local JobID = game.JobId
 
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1496537416356335626/uxX18rqqSu6JcIo4QeXXF-pXijzjq2P-bpEFUOMMeUZfX0m8AxXsVnvjce3rv-goY3tw"
 
 local FOLDER_NAME = "star_macro"
 local SAVE_FILE = FOLDER_NAME .. "/NotSameServers.json"
 
-local WAIT_BEFORE_HOP = 3
-local MAX_PAGES = 10
+local CHECK_DURATION = 3      -- temps total de check dans le serveur
+local CHECK_INTERVAL = 0.5    -- fréquence de check pendant CHECK_DURATION
+local RETRY_DELAY = 2         -- attente si aucun serveur trouvé
+local MAX_PAGES = 10          -- nombre de pages max à scanner
 
 local AllIDs = {}
 local VisitedIDs = {}
 local foundAnything = ""
+
+local lastWebhookJobId = nil
 
 local function ensureFolder()
     if not isfolder(FOLDER_NAME) then
@@ -95,7 +98,7 @@ local function getServerPage(cursor)
         return HttpService:JSONDecode(game:HttpGet(url))
     end)
 
-    if success and result then
+    if success and result and result.data then
         return result
     end
 
@@ -103,6 +106,7 @@ local function getServerPage(cursor)
 end
 
 local function findAvailableServer(maxPages)
+    local currentJobId = game.JobId
     local cursor = foundAnything
 
     for page = 1, maxPages do
@@ -120,7 +124,7 @@ local function findAvailableServer(maxPages)
             local playing = tonumber(server.playing) or 0
             local maxPlayers = tonumber(server.maxPlayers) or 0
 
-            if serverId ~= JobID and playing < maxPlayers and not hasServerBeenVisited(serverId) then
+            if serverId ~= currentJobId and playing < maxPlayers and not hasServerBeenVisited(serverId) then
                 foundAnything = site.nextPageCursor or ""
                 print("[DEBUG] Found server:", serverId, "(" .. playing .. "/" .. maxPlayers .. ")")
                 return serverId
@@ -174,37 +178,24 @@ local function hasVicious()
     return particles:FindFirstChild("Vicious") ~= nil
 end
 
+local function scanViciousForDuration(duration, interval)
+    local startTime = tick()
+
+    while tick() - startTime < duration do
+        if hasVicious() then
+            return true
+        end
+        task.wait(interval)
+    end
+
+    return false
+end
+
 local function getRequestFunction()
     return request
         or http_request
         or (syn and syn.request)
         or (fluxus and fluxus.request)
-end
-
-local function highlightVicious()
-    local particles = workspace:FindFirstChild("Particles")
-    if not particles then
-        return
-    end
-
-    local vicious = particles:FindFirstChild("Vicious")
-    if not vicious then
-        return
-    end
-
-    -- évite de recréer plusieurs highlights
-    if vicious:FindFirstChild("ViciousHighlight") then
-        return
-    end
-
-    local hl = Instance.new("Highlight")
-    hl.Name = "ViciousHighlight"
-    hl.FillColor = Color3.fromRGB(0, 255, 0)
-    hl.OutlineColor = Color3.fromRGB(0, 100, 0)
-    hl.FillTransparency = 0.35
-    hl.OutlineTransparency = 0
-    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.Parent = vicious
 end
 
 local function sendDiscordWebhook(isVicious)
@@ -215,6 +206,7 @@ local function sendDiscordWebhook(isVicious)
     end
 
     local color = isVicious and 65280 or 16711680
+
     local embed = {
         title = "Vicious Status",
         description = string.format("`Vicious : %s`", tostring(isVicious)),
@@ -232,7 +224,7 @@ local function sendDiscordWebhook(isVicious)
             },
             {
                 name = "JobId",
-                value = tostring(JobID),
+                value = tostring(game.JobId),
                 inline = false
             }
         },
@@ -244,7 +236,7 @@ local function sendDiscordWebhook(isVicious)
     if isVicious then
         table.insert(embed.fields, {
             name = "Link",
-            value = string.format("roblox://placeID=%s&gameInstanceId=%s", tostring(PlaceID), tostring(JobID)),
+            value = string.format("roblox://placeID=%s&gameInstanceId=%s", tostring(PlaceID), tostring(game.JobId)),
             inline = false
         })
     end
@@ -277,30 +269,24 @@ ensureFolder()
 loadServerList()
 
 while true do
-    local isVicious = hasVicious()
-    print("[DEBUG] Vicious:", isVicious)
+    local currentJobId = game.JobId
 
-    if isVicious then
-        sendDiscordWebhook(true)
-        print("[DEBUG] VICIOUS FOUND")
-        break
+    -- Envoie le webhook une seule fois par serveur
+    if lastWebhookJobId ~= currentJobId then
+        local isVicious = scanViciousForDuration(CHECK_DURATION, CHECK_INTERVAL)
+        print("[DEBUG] Vicious:", isVicious, "| JobId:", currentJobId)
+
+        sendDiscordWebhook(isVicious)
+        lastWebhookJobId = currentJobId
+    else
+        print("[DEBUG] Same server, webhook already sent for JobId:", currentJobId)
     end
 
-    sendDiscordWebhook(false)
-    print("[DEBUG] No Vicious, hopping in", WAIT_BEFORE_HOP, "seconds...")
-    task.wait(WAIT_BEFORE_HOP)
-
-    -- recheck juste avant hop
-    if hasVicious() then
-        highlightVicious()
-        sendDiscordWebhook(true)
-        print("[DEBUG] VICIOUS FOUND before hop")
-        break
-    end
-
+    -- Même si Vicious = true, on hop quand même
     local ok = hopServer()
+
     if not ok then
-        warn("[DEBUG] Hop failed, retry in 2s")
-        task.wait(2)
+        warn("[DEBUG] Hop failed, staying on same server. No new webhook will be sent.")
+        task.wait(RETRY_DELAY)
     end
 end
