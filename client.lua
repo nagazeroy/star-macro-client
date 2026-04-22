@@ -1,93 +1,161 @@
-local PlaceID = game.PlaceId
-local AllIDs = {}
-local foundAnything = ""
-local actualHour = os.date("!*t").hour
-local Deleted = false
-local File = pcall(function()
-    AllIDs = game:GetService('HttpService'):JSONDecode(readfile("NotSameServers.json"))
-end)
-if not File then
-    table.insert(AllIDs, actualHour)
-    writefile("NotSameServers.json", game:GetService('HttpService'):JSONEncode(AllIDs))
-end
-function TPReturner()
-    local Site;
-    if foundAnything == "" then
-        Site = game.HttpService:JSONDecode(game:HttpGet('https://games.roblox.com/v1/games/' .. PlaceID .. '/servers/Public?sortOrder=Asc&limit=100'))
-    else
-        Site = game.HttpService:JSONDecode(game:HttpGet('https://games.roblox.com/v1/games/' .. PlaceID .. '/servers/Public?sortOrder=Asc&limit=100&cursor=' .. foundAnything))
-    end
-    local ID = ""
-    if Site.nextPageCursor and Site.nextPageCursor ~= "null" and Site.nextPageCursor ~= nil then
-        foundAnything = Site.nextPageCursor
-    end
-    local num = 0;
-    for i,v in pairs(Site.data) do
-        local Possible = true
-        ID = tostring(v.id)
-        if tonumber(v.maxPlayers) > tonumber(v.playing) then
-            for _,Existing in pairs(AllIDs) do
-                if num ~= 0 then
-                    if ID == tostring(Existing) then
-                        Possible = false
-                    end
-                else
-                    if tonumber(actualHour) ~= tonumber(Existing) then
-                        local delFile = pcall(function()
-                            delfile("NotSameServers.json")
-                            AllIDs = {}
-                            table.insert(AllIDs, actualHour)
-                        end)
-                    end
-                end
-                num = num + 1
-            end
-            if Possible == true then
-                table.insert(AllIDs, ID)
-                wait()
-                pcall(function()
-                    writefile("NotSameServers.json", game:GetService('HttpService'):JSONEncode(AllIDs))
-                    wait()
-                    game:GetService("TeleportService"):TeleportToPlaceInstance(PlaceID, ID, game.Players.LocalPlayer)
-                end)
-                wait(4)
-            end
-        end
-    end
-end
-
-function Teleport()
-    while wait() do
-        pcall(function()
-            TPReturner()
-            if foundAnything ~= "" then
-                TPReturner()
-            end
-        end)
-    end
-end
-
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 
-local folderName = "star_macro"
-local fileName = folderName .. "/core_stats.txt"
+local LocalPlayer = Players.LocalPlayer
+local PlaceID = game.PlaceId
 
-if not isfolder(folderName) then
-    makefolder(folderName)
+local SAVE_FILE = "NotSameServers.json"
+local FOLDER_NAME = "star_macro"
+
+local AllIDs = {}
+local foundAnything = ""
+
+-- ========= Utils =========
+
+local function getCurrentHour()
+    return os.date("!*t").hour
 end
 
-while true do
-    local is_vicious = false
-    local vicious_path = workspace.Particles:FindFirstChild("Vicious")
-    if vicious_path then
-        is_vicious = true
+local function ensureFolder()
+    if not isfolder(FOLDER_NAME) then
+        makefolder(FOLDER_NAME)
+    end
+end
+
+local function saveServerList()
+    writefile(SAVE_FILE, HttpService:JSONEncode(AllIDs))
+end
+
+local function loadServerList()
+    local success, data = pcall(function()
+        return HttpService:JSONDecode(readfile(SAVE_FILE))
+    end)
+
+    if success and type(data) == "table" then
+        AllIDs = data
     else
-        is_vicious = false
+        AllIDs = { getCurrentHour() }
+        saveServerList()
     end
-    print("[ DEBUG ] Vicious:", is_vicious)
+end
+
+local function resetServerListIfHourChanged()
+    local currentHour = getCurrentHour()
+
+    if tonumber(AllIDs[1]) ~= currentHour then
+        pcall(function()
+            delfile(SAVE_FILE)
+        end)
+
+        AllIDs = { currentHour }
+        saveServerList()
+    end
+end
+
+local function hasServerBeenVisited(serverId)
+    for i = 2, #AllIDs do
+        if tostring(AllIDs[i]) == tostring(serverId) then
+            return true
+        end
+    end
+    return false
+end
+
+local function getServerPage(cursor)
+    local url = "https://games.roblox.com/v1/games/" .. PlaceID .. "/servers/Public?sortOrder=Asc&limit=100"
+
+    if cursor and cursor ~= "" then
+        url = url .. "&cursor=" .. cursor
+    end
+
+    local success, result = pcall(function()
+        return HttpService:JSONDecode(game:HttpGet(url))
+    end)
+
+    if success then
+        return result
+    end
+
+    return nil
+end
+
+local function hasVicious()
+    local particles = workspace:FindFirstChild("Particles")
+    if not particles then
+        return false
+    end
+
+    return particles:FindFirstChild("Vicious") ~= nil
+end
+
+-- ========= Teleport =========
+
+local function TPReturner()
+    resetServerListIfHourChanged()
+
+    local site = getServerPage(foundAnything)
+    if not site or not site.data then
+        warn("[DEBUG] Failed to found Server")
+        return false
+    end
+
+    if site.nextPageCursor and site.nextPageCursor ~= "null" then
+        foundAnything = site.nextPageCursor
+    else
+        foundAnything = ""
+    end
+
+    for _, server in pairs(site.data) do
+        local serverId = tostring(server.id)
+        local maxPlayers = tonumber(server.maxPlayers) or 0
+        local playing = tonumber(server.playing) or 0
+
+        if playing < maxPlayers and not hasServerBeenVisited(serverId) then
+            table.insert(AllIDs, serverId)
+            saveServerList()
+
+            local success, err = pcall(function()
+                TeleportService:TeleportToPlaceInstance(PlaceID, serverId, LocalPlayer)
+            end)
+
+            if not success then
+                warn("[DEBUG] Teleport Error :", err)
+                return false
+            end
+
+            return true
+        end
+    end
+
+    return false
+end
+
+local function Teleport()
+    local teleported = TPReturner()
+
+    if not teleported and foundAnything ~= "" then
+        teleported = TPReturner()
+    end
+
+    return teleported
+end
+
+-- ========= Main =========
+
+ensureFolder()
+loadServerList()
+
+while true do
+    local is_vicious = hasVicious()
+    print("[DEBUG] Vicious:", is_vicious)
+
     if is_vicious then
-        break;
+        print("[DEBUG] VICIOUS FIND ")
+        break
     end
-    wait(2)
+
+    task.wait(2)
     Teleport()
+    task.wait(2)
 end
