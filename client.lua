@@ -87,7 +87,7 @@ while true do
     print("[ DEBUG ] Vicious:", is_vicious)
     if is_vicious then
         break;
+    end
     wait(2)
     Teleport()
-    wait(10)
 end
