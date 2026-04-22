@@ -246,6 +246,7 @@ while true do
         
     end
     sendViciousWebhook()
+    wait(2)
     local ok = Teleport(10)
     if not ok then
         task.wait(1)
