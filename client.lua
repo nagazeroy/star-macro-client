@@ -6,13 +6,12 @@ local LocalPlayer = Players.LocalPlayer
 local PlaceID = game.PlaceId
 local JobID = game.JobId
 
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1496537416356335626/uxX18rqqSu6JcIo4QeXXF-pXijzjq2P-bpEFUOMMeUZfX0m8AxXsVnvjce3rv-goY3tw"
+
 local FOLDER_NAME = "star_macro"
 local SAVE_FILE = FOLDER_NAME .. "/NotSameServers.json"
 
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1496537416356335626/uxX18rqqSu6JcIo4QeXXF-pXijzjq2P-bpEFUOMMeUZfX0m8AxXsVnvjce3rv-goY3tw"
-
-local CHECK_INTERVAL = 2
-local WAIT_BEFORE_HOP = 2
+local WAIT_BEFORE_HOP = 3
 local MAX_PAGES = 10
 
 local AllIDs = {}
@@ -67,6 +66,7 @@ local function resetServerListIfHourChanged()
         saveServerList()
         rebuildVisitedMap()
         foundAnything = ""
+        print("[DEBUG] Server list reset")
     end
 end
 
@@ -106,11 +106,12 @@ local function findAvailableServer(maxPages)
     local cursor = foundAnything
 
     for page = 1, maxPages do
-        local site = getServerPage(cursor)
+        print("[DEBUG] Scanning page:", page)
 
+        local site = getServerPage(cursor)
         if not site or not site.data then
             warn("[DEBUG] Failed to load server page:", page)
-            task.wait(0.5)
+            task.wait(0.3)
             continue
         end
 
@@ -121,6 +122,7 @@ local function findAvailableServer(maxPages)
 
             if serverId ~= JobID and playing < maxPlayers and not hasServerBeenVisited(serverId) then
                 foundAnything = site.nextPageCursor or ""
+                print("[DEBUG] Found server:", serverId, "(" .. playing .. "/" .. maxPlayers .. ")")
                 return serverId
             end
         end
@@ -133,23 +135,23 @@ local function findAvailableServer(maxPages)
             break
         end
 
-        task.wait(0.15)
+        task.wait(0.1)
     end
 
     return nil
 end
 
-local function Teleport(maxPages)
+local function hopServer()
     resetServerListIfHourChanged()
 
-    local serverId = findAvailableServer(maxPages or MAX_PAGES)
-
+    local serverId = findAvailableServer(MAX_PAGES)
     if not serverId then
-        warn("[DEBUG] Failed to find server")
+        warn("[DEBUG] Failed to find server to hop")
         return false
     end
 
     markServerVisited(serverId)
+    print("[DEBUG] Teleporting to:", serverId)
 
     local success, err = pcall(function()
         TeleportService:TeleportToPlaceInstance(PlaceID, serverId, LocalPlayer)
@@ -181,7 +183,6 @@ end
 
 local function sendDiscordWebhook(isVicious)
     local req = getRequestFunction()
-
     if not req then
         warn("[WEBHOOK] No request function available")
         return false
@@ -222,9 +223,9 @@ local function sendDiscordWebhook(isVicious)
         })
     end
 
-    local data = {
+    local body = HttpService:JSONEncode({
         embeds = { embed }
-    }
+    })
 
     local success, response = pcall(function()
         return req({
@@ -233,7 +234,7 @@ local function sendDiscordWebhook(isVicious)
             Headers = {
                 ["Content-Type"] = "application/json"
             },
-            Body = HttpService:JSONEncode(data)
+            Body = body
         })
     end)
 
@@ -246,41 +247,33 @@ local function sendDiscordWebhook(isVicious)
     end
 end
 
-local function waitForVicious(timeout, interval)
-    local startTime = tick()
-
-    while tick() - startTime < timeout do
-        local isVicious = hasVicious()
-        print("[DEBUG] Vicious:", isVicious)
-
-        if isVicious then
-            return true
-        end
-
-        task.wait(interval)
-    end
-
-    return false
-end
-
 ensureFolder()
 loadServerList()
 
 while true do
-    local found = waitForVicious(WAIT_BEFORE_HOP, CHECK_INTERVAL)
+    local isVicious = hasVicious()
+    print("[DEBUG] Vicious:", isVicious)
 
-    if found then
-        print("[DEBUG] VICIOUS FOUND")
+    if isVicious then
         sendDiscordWebhook(true)
+        print("[DEBUG] VICIOUS FOUND")
         break
-    else
-        sendDiscordWebhook(false)
     end
 
-    local ok = Teleport(MAX_PAGES)
+    sendDiscordWebhook(false)
+    print("[DEBUG] No Vicious, hopping in", WAIT_BEFORE_HOP, "seconds...")
+    task.wait(WAIT_BEFORE_HOP)
+
+    -- recheck juste avant hop
+    if hasVicious() then
+        sendDiscordWebhook(true)
+        print("[DEBUG] VICIOUS FOUND before hop")
+        break
+    end
+
+    local ok = hopServer()
     if not ok then
+        warn("[DEBUG] Hop failed, retry in 2s")
         task.wait(2)
     end
-
-    task.wait(2)
 end
