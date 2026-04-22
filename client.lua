@@ -5,35 +5,21 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local PlaceID = game.PlaceId
 
-local function getRequestFunction()
-    return request
-        or http_request
-        or (syn and syn.request)
-        or (fluxus and fluxus.request)
-end
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
+local Window = Library.CreateLib("Vicious Hopper", "DarkTheme")
 
-local requestFunction = getRequestFunction()
-if not requestFunction then
-    return
-end
+local MainTab = Window:NewTab("Main")
+local WebhookTab = Window:NewTab("Webhook")
+local ServerTab = Window:NewTab("Server")
+local UiTab = Window:NewTab("UI")
 
-local librarySource = requestFunction({
-    Method = "GET",
-    Url = "https://wednesday.wtf/library.lua"
-})
-
-local library = loadstring(librarySource.Body)()
-
-local window = library:new_window("vicious hopper", nil, nil)
-
-local main_tab = window:new_tab("main")
-local settings_tab = window:new_tab("settings")
-
-library:apply_settings(settings_tab)
-
-local automation_group = main_tab:new_group("automation", false)
-local webhook_group = main_tab:new_group("webhook", true)
-local utility_group = main_tab:new_group("utility", false)
+local RuntimeSection = MainTab:NewSection("Runtime")
+local ControlSection = MainTab:NewSection("Controls")
+local WebhookSection = WebhookTab:NewSection("Webhook Settings")
+local WebhookTestSection = WebhookTab:NewSection("Webhook Tests")
+local ServerSection = ServerTab:NewSection("Server Settings")
+local UtilitySection = ServerTab:NewSection("Utilities")
+local UiSection = UiTab:NewSection("UI")
 
 local FOLDER_NAME = "star_macro"
 local SAVE_FILE = FOLDER_NAME .. "/NotSameServers.json"
@@ -55,9 +41,33 @@ local foundAnything = ""
 local lastWebhookJobId = nil
 local loopRunning = false
 
+local function updateLabel(labelObject, text)
+    pcall(function()
+        labelObject:UpdateLabel(text)
+    end)
+end
+
+local StatusLabel = RuntimeSection:NewLabel("Status: Idle")
+local ResultLabel = RuntimeSection:NewLabel("Last Result: None")
+local JobLabel = RuntimeSection:NewLabel("Current JobId: " .. tostring(game.JobId))
+local WebhookStateLabel = RuntimeSection:NewLabel("Webhook State: Ready")
+local SettingsLabel = RuntimeSection:NewLabel("Webhook: Enabled | Hopper: Disabled")
+
+local function refreshInfo()
+    updateLabel(JobLabel, "Current JobId: " .. tostring(game.JobId))
+    updateLabel(SettingsLabel, "Webhook: " .. (Settings.WebhookEnabled and "Enabled" or "Disabled") .. " | Hopper: " .. (Settings.Enabled and "Enabled" or "Disabled"))
+end
+
+local function getRequestFunction()
+    return request
+        or http_request
+        or (syn and syn.request)
+        or (fluxus and fluxus.request)
+end
+
 local function ensureFolder()
     pcall(function()
-        if not isfolder(FOLDER_NAME) then
+        if isfolder and makefolder and not isfolder(FOLDER_NAME) then
             makefolder(FOLDER_NAME)
         end
     end)
@@ -76,13 +86,17 @@ end
 
 local function saveServerList()
     pcall(function()
-        writefile(SAVE_FILE, HttpService:JSONEncode(AllIDs))
+        if writefile then
+            writefile(SAVE_FILE, HttpService:JSONEncode(AllIDs))
+        end
     end)
 end
 
 local function loadServerList()
     local success, data = pcall(function()
-        return HttpService:JSONDecode(readfile(SAVE_FILE))
+        if readfile then
+            return HttpService:JSONDecode(readfile(SAVE_FILE))
+        end
     end)
 
     if success and type(data) == "table" and #data >= 1 then
@@ -100,6 +114,7 @@ local function resetVisitedServers()
     AllIDs = { getCurrentHour() }
     rebuildVisitedMap()
     saveServerList()
+    lastWebhookJobId = nil
 end
 
 local function resetServerListIfHourChanged()
@@ -111,7 +126,9 @@ local function resetServerListIfHourChanged()
 
     if tonumber(AllIDs[1]) ~= currentHour then
         pcall(function()
-            delfile(SAVE_FILE)
+            if delfile then
+                delfile(SAVE_FILE)
+            end
         end)
 
         AllIDs = { currentHour }
@@ -159,9 +176,8 @@ local function findAvailableServer(maxPages)
 
     for _ = 1, maxPages do
         local site = getServerPage(cursor)
-        if not site or not site.data then
-            task.wait(0.25)
-        else
+
+        if site and site.data then
             for _, server in ipairs(site.data) do
                 local serverId = tostring(server.id)
                 local playing = tonumber(server.playing) or 0
@@ -180,6 +196,8 @@ local function findAvailableServer(maxPages)
                 foundAnything = ""
                 break
             end
+        else
+            task.wait(0.25)
         end
 
         task.wait(0.1)
@@ -193,16 +211,18 @@ local function hopServer()
 
     local serverId = findAvailableServer(Settings.MaxPages)
     if not serverId then
+        updateLabel(StatusLabel, "Status: No new server found")
         return false
     end
 
     markServerVisited(serverId)
+    updateLabel(StatusLabel, "Status: Teleporting")
 
-    pcall(function()
+    local success = pcall(function()
         TeleportService:TeleportToPlaceInstance(PlaceID, serverId, LocalPlayer)
     end)
 
-    return true
+    return success
 end
 
 local function hasVicious()
@@ -230,10 +250,18 @@ end
 
 local function sendDiscordWebhook(isVicious)
     if not Settings.WebhookEnabled then
+        updateLabel(WebhookStateLabel, "Webhook State: Disabled")
         return false
     end
 
     if not Settings.WebhookURL or Settings.WebhookURL == "" then
+        updateLabel(WebhookStateLabel, "Webhook State: Missing URL")
+        return false
+    end
+
+    local requestFunction = getRequestFunction()
+    if not requestFunction then
+        updateLabel(WebhookStateLabel, "Webhook State: No request function")
         return false
     end
 
@@ -287,6 +315,12 @@ local function sendDiscordWebhook(isVicious)
         })
     end)
 
+    if success then
+        updateLabel(WebhookStateLabel, "Webhook State: Sent (" .. tostring(isVicious) .. ")")
+    else
+        updateLabel(WebhookStateLabel, "Webhook State: Failed")
+    end
+
     return success
 end
 
@@ -299,12 +333,21 @@ local function startLoop()
 
     task.spawn(function()
         while Settings.Enabled do
+            refreshInfo()
+            updateLabel(JobLabel, "Current JobId: " .. tostring(game.JobId))
+
             local currentJobId = game.JobId
 
             if lastWebhookJobId ~= currentJobId then
+                updateLabel(StatusLabel, "Status: Scanning server")
                 local isVicious = scanViciousForDuration(Settings.CheckDuration, Settings.CheckInterval)
+
+                updateLabel(ResultLabel, "Last Result: " .. tostring(isVicious))
                 sendDiscordWebhook(isVicious)
+
                 lastWebhookJobId = currentJobId
+            else
+                updateLabel(StatusLabel, "Status: Waiting for new server")
             end
 
             if not Settings.Enabled then
@@ -320,128 +363,121 @@ local function startLoop()
             end
         end
 
+        updateLabel(StatusLabel, "Status: Stopped")
+        refreshInfo()
         loopRunning = false
     end)
 end
 
 ensureFolder()
 loadServerList()
+refreshInfo()
 
-automation_group:new_checkbox("enable_hopper", {
-    text = "Enable Hopper",
-    default = Settings.Enabled,
-    callback = function(state)
-        Settings.Enabled = state
-        if state then
-            startLoop()
-        end
-    end
-})
+ControlSection:NewToggle("Enable Hopper", "Start or stop the hopper", function(state)
+    Settings.Enabled = state
+    refreshInfo()
 
-automation_group:new_slider("check_duration", {
-    text = "Check Duration",
-    min = 0,
-    max = 15,
-    default = Settings.CheckDuration,
-    decimals = 1,
-    suffix = " sec",
-    callback = function(state)
-        Settings.CheckDuration = tonumber(state) or Settings.CheckDuration
+    if state then
+        updateLabel(StatusLabel, "Status: Starting")
+        startLoop()
+    else
+        updateLabel(StatusLabel, "Status: Stopping")
     end
-})
+end)
 
-automation_group:new_slider("check_interval", {
-    text = "Check Interval",
-    min = 0.1,
-    max = 5,
-    default = Settings.CheckInterval,
-    decimals = 1,
-    suffix = " sec",
-    callback = function(state)
-        Settings.CheckInterval = tonumber(state) or Settings.CheckInterval
-    end
-})
+ControlSection:NewButton("Send Current Server Status", "Send one webhook for this server", function()
+    local isVicious = hasVicious()
+    updateLabel(ResultLabel, "Last Result: " .. tostring(isVicious))
+    sendDiscordWebhook(isVicious)
+end)
 
-automation_group:new_slider("retry_delay", {
-    text = "Retry Delay",
-    min = 1,
-    max = 15,
-    default = Settings.RetryDelay,
-    decimals = 0,
-    suffix = " sec",
-    callback = function(state)
-        Settings.RetryDelay = tonumber(state) or Settings.RetryDelay
-    end
-})
+ControlSection:NewButton("Reset Webhook Lock", "Allow webhook resend on current server", function()
+    lastWebhookJobId = nil
+    updateLabel(StatusLabel, "Status: Webhook lock reset")
+end)
 
-automation_group:new_slider("max_pages", {
-    text = "Max Pages",
-    min = 1,
-    max = 30,
-    default = Settings.MaxPages,
-    decimals = 0,
-    callback = function(state)
-        Settings.MaxPages = tonumber(state) or Settings.MaxPages
-    end
-})
+WebhookSection:NewToggle("Enable Webhook", "Enable or disable webhook sending", function(state)
+    Settings.WebhookEnabled = state
+    refreshInfo()
+end)
 
-automation_group:new_checkbox("reset_hourly", {
-    text = "Reset Visited Hourly",
-    default = Settings.ResetVisitedHourly,
-    callback = function(state)
-        Settings.ResetVisitedHourly = state
-    end
-})
+WebhookSection:NewTextBox("Webhook URL", "Paste your Discord webhook URL", function(txt)
+    Settings.WebhookURL = tostring(txt or "")
+end)
 
-webhook_group:new_checkbox("enable_webhook", {
-    text = "Enable Webhook",
-    default = Settings.WebhookEnabled,
-    callback = function(state)
-        Settings.WebhookEnabled = state
-    end
-})
+WebhookSection:NewButton("Use Default Webhook URL", "Restore the default webhook URL", function()
+    Settings.WebhookURL = "https://discord.com/api/webhooks/1496537416356335626/uxX18rqqSu6JcIo4QeXXF-pXijzjq2P-bpEFUOMMeUZfX0m8AxXsVnvjce3rv-goY3tw"
+    updateLabel(WebhookStateLabel, "Webhook State: Default URL restored")
+end)
 
-webhook_group:new_textbox("webhook_url", {
-    text = "Webhook URL",
-    default = Settings.WebhookURL,
-    callback = function(state)
-        Settings.WebhookURL = tostring(state or "")
-    end
-})
+WebhookTestSection:NewButton("Send True Test", "Send a green webhook", function()
+    sendDiscordWebhook(true)
+end)
 
-webhook_group:new_button({
-    text = "Send True Test",
-    callback = function()
-        sendDiscordWebhook(true)
-    end
-})
+WebhookTestSection:NewButton("Send False Test", "Send a red webhook", function()
+    sendDiscordWebhook(false)
+end)
 
-webhook_group:new_button({
-    text = "Send False Test",
-    callback = function()
-        sendDiscordWebhook(false)
-    end
-})
+ServerSection:NewSlider("Check Duration", "How long to scan each server", 15, 1, function(value)
+    Settings.CheckDuration = tonumber(value) or Settings.CheckDuration
+end)
 
-webhook_group:new_button({
-    text = "Send Current Server Status",
-    callback = function()
-        local isVicious = hasVicious()
-        sendDiscordWebhook(isVicious)
+ServerSection:NewTextBox("Check Interval", "Example: 0.5", function(txt)
+    local num = tonumber(txt)
+    if num and num > 0 then
+        Settings.CheckInterval = num
     end
-})
+end)
 
-utility_group:new_button({
-    text = "Reset Visited Servers",
-    callback = function()
-        resetVisitedServers()
-        lastWebhookJobId = nil
-    end
-})
+ServerSection:NewSlider("Retry Delay", "Delay when no server is found", 15, 1, function(value)
+    Settings.RetryDelay = tonumber(value) or Settings.RetryDelay
+end)
 
-utility_group:new_button({
-    text = "Reload Visited File",
-    callback = function()
-        loadServerList()
+ServerSection:NewSlider("Max Pages", "How many server pages to scan", 30, 1, function(value)
+    Settings.MaxPages = tonumber(value) or Settings.MaxPages
+end)
+
+ServerSection:NewToggle("Reset Visited Hourly", "Reset visited servers every hour", function(state)
+    Settings.ResetVisitedHourly = state
+end)
+
+UtilitySection:NewButton("Reset Visited Servers", "Clear visited server list", function()
+    resetVisitedServers()
+    updateLabel(StatusLabel, "Status: Visited servers reset")
+end)
+
+UtilitySection:NewButton("Reload Visited File", "Reload local visited server file", function()
+    loadServerList()
+    updateLabel(StatusLabel, "Status: Visited file reloaded")
+end)
+
+UtilitySection:NewButton("Force Hop Now", "Try to hop immediately", function()
+    task.spawn(function()
+        hopServer()
+    end)
+end)
+
+UiSection:NewKeybind("Toggle UI", "Show or hide the UI", Enum.KeyCode.RightControl, function()
+    Library:ToggleUI()
+end)
+
+UiSection:NewDropdown("Theme", "Change UI theme", {
+    "LightTheme",
+    "DarkTheme",
+    "GrapeTheme",
+    "BloodTheme",
+    "Ocean",
+    "Midnight",
+    "Sentinel",
+    "Synapse"
+}, function(currentTheme)
+    local success, newLibrary = pcall(function()
+        return loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
+    end)
+
+    if success and newLibrary then
+        -- Theme switching is not dynamically exposed reliably by Kavo,
+        -- so this dropdown is informational for future extension.
+        updateLabel(StatusLabel, "Status: Selected theme " .. tostring(currentTheme))
     end
-})
+end)
