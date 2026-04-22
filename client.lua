@@ -242,10 +242,10 @@ while true do
 
     if is_vicious then
         print("[DEBUG] VICIOUS FOUND")
-        sendViciousWebhook()
-        break
+        
+        
     end
-
+    sendViciousWebhook()
     local ok = Teleport(10)
     if not ok then
         task.wait(1)
