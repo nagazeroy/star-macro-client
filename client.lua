@@ -215,6 +215,7 @@ while true do
     writeLogIfNeeded(viciousPath)
 
     print("[ OK ] Teleporting to another server...")
+    wait(3)
     local teleported = teleport(15, 200)
 
     if not teleported then
