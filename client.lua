@@ -220,6 +220,6 @@ while true do
 
     if not teleported then
         warn("[ ERROR ] No valid server found, retrying server search...")
-        task.wait(0.5)
+        task.wait(5)
     end
 end
