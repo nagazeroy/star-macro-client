@@ -203,7 +203,7 @@ local function collectServers(data)
 	local cursor = ""
 
 	repeat
-		local url = "https://games.roblox.com/v1/games/" .. tostring(PlaceId) .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true"
+		local url = "https://games.roblox.com/v1/games/" .. tostring(PlaceId) .. "/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true"
 		if cursor ~= "" then
 			url = url .. "&cursor=" .. HttpService:UrlEncode(cursor)
 		end
