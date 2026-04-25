@@ -215,11 +215,11 @@ while true do
     writeLogIfNeeded(viciousPath)
 
     print("[ OK ] Teleporting to another server...")
-    wait(3)
+    wait(10)
     local teleported = teleport(15, 200)
 
     if not teleported then
         warn("[ ERROR ] No valid server found, retrying server search...")
-        task.wait(10)
+        task.wait(2)
     end
 end
