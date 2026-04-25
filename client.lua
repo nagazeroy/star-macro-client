@@ -1,32 +1,104 @@
-
 local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+
+local Player = Players.LocalPlayer
 local PlaceID = game.PlaceId
-local LocalPlayer = Players.LocalPlayer
+local JobID = game.JobId
 local folderName = "star_macro"
 local viciousFile = folderName .. "/vicious.txt"
+local api = "https://games.roblox.com/v1/games/"
+local randomObject = Random.new()
 
 if not isfolder(folderName) then
     makefolder(folderName)
 end
 
-local Player = game.Players.LocalPlayer    
-local Http = game:GetService("HttpService")
-local TPS = game:GetService("TeleportService")
-local Api = "https://games.roblox.com/v1/games/"
+local function listServers(cursor)
+    local url = api .. PlaceID .. "/servers/Public?sortOrder=Asc&limit=100"
 
-local _place,_id = game.PlaceId, game.JobId
--- Asc for lowest player count, Desc for highest player count
-local _servers = Api.._place.."/servers/Public?sortOrder=Asc&limit=10"
-function ListServers(cursor)
-   local Raw = game:HttpGet(_servers .. ((cursor and "&cursor="..cursor) or ""))
-   return Http:JSONDecode(Raw)
+    if cursor and cursor ~= "" then
+        url = url .. "&cursor=" .. HttpService:UrlEncode(cursor)
+    end
+
+    local success, result = pcall(function()
+        return HttpService:JSONDecode(game:HttpGet(url))
+    end)
+
+    if not success or type(result) ~= "table" then
+        return nil
+    end
+
+    return result
+end
+
+local function getTeleportTarget(maxPages)
+    local cursor = nil
+    local pageCount = 0
+    local candidates = {}
+
+    while pageCount < maxPages do
+        local servers = listServers(cursor)
+        if not servers or type(servers.data) ~= "table" then
+            break
+        end
+
+        for _, server in ipairs(servers.data) do
+            local serverId = tostring(server.id)
+            local playing = tonumber(server.playing) or 0
+            local maxPlayers = tonumber(server.maxPlayers) or 0
+
+            if serverId ~= JobID and playing < maxPlayers then
+                table.insert(candidates, serverId)
+            end
+        end
+
+        cursor = servers.nextPageCursor
+        pageCount = pageCount + 1
+
+        if not cursor or cursor == "" or cursor == "null" then
+            break
+        end
+    end
+
+    if #candidates == 0 then
+        return nil
+    end
+
+    return candidates[randomObject:NextInteger(1, #candidates)]
 end
 
 local function teleport()
-   Player.Character.HumanoidRootPart.Anchored = true
-   local Servers = ListServers()
-   local Server = Servers.data[math.random(1,#Servers.data)]
-   TPS:TeleportToPlaceInstance(_place, Server.id, Player)
+    local character = Player.Character or Player.CharacterAdded:Wait()
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    local targetServerId = getTeleportTarget(5)
+
+    if not targetServerId then
+        warn("[ ERROR ] No valid server found")
+        return false
+    end
+
+    local wasAnchored = false
+
+    if rootPart then
+        wasAnchored = rootPart.Anchored
+        rootPart.Anchored = true
+    end
+
+    local success, err = pcall(function()
+        TeleportService:TeleportToPlaceInstance(PlaceID, targetServerId, Player)
+    end)
+
+    if not success then
+        if rootPart and rootPart.Parent then
+            rootPart.Anchored = wasAnchored
+        end
+
+        warn("[ ERROR ] Teleport failed:", err)
+        return false
+    end
+
+    return true
 end
 
 local function getViciousPath()
