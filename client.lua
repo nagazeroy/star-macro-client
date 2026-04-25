@@ -62,8 +62,6 @@ local function getObjectPosition(instance)
     return "N/A"
 end
 
-loadVisitedServers()
-
 local lines = {}
 table.insert(lines, "Time,Vicious,Position,Server")
 
