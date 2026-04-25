@@ -1,129 +1,32 @@
-local HttpService = game:GetService("HttpService")
-local TeleportService = game:GetService("TeleportService")
-local Players = game:GetService("Players")
 
+local Players = game:GetService("Players")
 local PlaceID = game.PlaceId
 local LocalPlayer = Players.LocalPlayer
-
-local allIDs = {}
-local foundAnything = ""
-
 local folderName = "star_macro"
 local viciousFile = folderName .. "/vicious.txt"
-local serverFile = "NotSameServers.json"
 
 if not isfolder(folderName) then
     makefolder(folderName)
 end
 
-local function getCurrentHour()
-    return os.date("!*t").hour
-end
+local Player = game.Players.LocalPlayer    
+local Http = game:GetService("HttpService")
+local TPS = game:GetService("TeleportService")
+local Api = "https://games.roblox.com/v1/games/"
 
-local function loadVisitedServers()
-    local success, data = pcall(function()
-        return HttpService:JSONDecode(readfile(serverFile))
-    end)
-
-    if success and type(data) == "table" then
-        allIDs = data
-    else
-        allIDs = { getCurrentHour() }
-        writefile(serverFile, HttpService:JSONEncode(allIDs))
-    end
-end
-
-local function saveVisitedServers()
-    writefile(serverFile, HttpService:JSONEncode(allIDs))
-end
-
-local function resetVisitedServersIfNeeded()
-    local currentHour = getCurrentHour()
-
-    if tonumber(allIDs[1]) ~= currentHour then
-        pcall(function()
-            delfile(serverFile)
-        end)
-
-        allIDs = { currentHour }
-        saveVisitedServers()
-    end
-end
-
-local function hasVisitedServer(serverId)
-    for index = 2, #allIDs do
-        if tostring(allIDs[index]) == tostring(serverId) then
-            return true
-        end
-    end
-
-    return false
-end
-
-local function getServerPage()
-    local url = "https://games.roblox.com/v1/games/" .. PlaceID .. "/servers/Public?sortOrder=Asc&limit=100"
-
-    if foundAnything ~= "" then
-        url = url .. "&cursor=" .. foundAnything
-    end
-
-    local success, result = pcall(function()
-        return HttpService:JSONDecode(game:HttpGet(url))
-    end)
-
-    if not success or type(result) ~= "table" then
-        return nil
-    end
-
-    return result
-end
-
-local function tpReturner()
-    resetVisitedServersIfNeeded()
-
-    local site = getServerPage()
-    if not site or type(site.data) ~= "table" then
-        return false
-    end
-
-    if site.nextPageCursor and site.nextPageCursor ~= "null" then
-        foundAnything = site.nextPageCursor
-    else
-        foundAnything = ""
-    end
-
-    for _, serverData in pairs(site.data) do
-        local serverId = tostring(serverData.id)
-        local maxPlayers = tonumber(serverData.maxPlayers) or 0
-        local playing = tonumber(serverData.playing) or 0
-
-        if playing < maxPlayers and not hasVisitedServer(serverId) then
-            table.insert(allIDs, serverId)
-            saveVisitedServers()
-
-            local success = pcall(function()
-                TeleportService:TeleportToPlaceInstance(PlaceID, serverId, LocalPlayer)
-            end)
-
-            if success then
-                return true
-            end
-        end
-    end
-
-    return false
+local _place,_id = game.PlaceId, game.JobId
+-- Asc for lowest player count, Desc for highest player count
+local _servers = Api.._place.."/servers/Public?sortOrder=Asc&limit=10"
+function ListServers(cursor)
+   local Raw = game:HttpGet(_servers .. ((cursor and "&cursor="..cursor) or ""))
+   return Http:JSONDecode(Raw)
 end
 
 local function teleport()
-    if tpReturner() then
-        return true
-    end
-
-    if foundAnything ~= "" then
-        return tpReturner()
-    end
-
-    return false
+   Player.Character.HumanoidRootPart.Anchored = true
+   local Servers = ListServers()
+   local Server = Servers.data[math.random(1,#Servers.data)]
+   TPS:TeleportToPlaceInstance(_place, Server.id, Player)
 end
 
 local function getViciousPath()
@@ -184,8 +87,11 @@ while true do
     writefile(viciousFile, table.concat(lines, "\n"))
     print("[ OK ] File written:", viciousFile)
 
+    if viciousPath then
+        break
+    end
+
     task.wait(1)
     print("[ OK ] Teleporting to another server...")
     teleport()
-    task.wait(3)
 end
