@@ -1,9 +1,9 @@
 local Config = {
-	MaxStore = 3600,
-	CheckInterval = 2500,
-	TeleportInterval = 1000,
-	TeleportTimeout = 8,
-	MaxCandidates = 200
+	MaxStore = 7200,
+	CheckInterval = 1000,
+	TeleportInterval = 500,
+	TeleportTimeout = 6,
+	MaxCandidates = 500
 }
 
 local HttpService = game:GetService("HttpService")
