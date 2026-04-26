@@ -159,9 +159,7 @@ local function teleportToServer(serverId)
 	end)
 
 	local success, result = pcall(function()
-		local teleportOptions = Instance.new("TeleportOptions")
-		teleportOptions.ServerInstanceId = serverId
-		TeleportService:TeleportAsync(game.PlaceId, { Player }, teleportOptions)
+		TeleportService:TeleportToPlaceInstance(game.PlaceId, serverId, Player)
 	end)
 
 	if not success then
