@@ -1,11 +1,7 @@
 local Config = {
-	CheckInterval = 1,
-	ServerObservationSeconds = 6,
-	TeleportTimeout = 8,
-	TeleportRetryDelay = 2
+	CheckInterval = 1
 }
 
-local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 
 local Player = Players.LocalPlayer
@@ -14,49 +10,19 @@ if not Player then
 	Player = Players.LocalPlayer
 end
 
-local PlaceId = game.PlaceId
-
 local folderName = "star_macro"
 local viciousFile = folderName .. "/vicious.txt"
-local serverQueueFile = folderName .. "/server_queue.txt"
-local hopStatusFile = folderName .. "/hop_status.txt"
 
 local lastLogKey = nil
-local serverEnteredAt = os.clock()
-local hopAttemptedForThisServer = false
 
 if not isfolder(folderName) then
 	makefolder(folderName)
 end
 
-local function ensureFile(path, defaultValue)
-	if not isfile(path) then
-		writefile(path, defaultValue)
+local function ensureLogFile()
+	if not isfile(viciousFile) then
+		writefile(viciousFile, "Time,Vicious,Position,Server\n")
 	end
-end
-
-local function readTrimmedFile(path, defaultValue)
-	if not isfile(path) then
-		return defaultValue
-	end
-
-	local success, content = pcall(readfile, path)
-	if not success or type(content) ~= "string" then
-		return defaultValue
-	end
-
-	content = content:gsub("^\239\187\191", "")
-	content = content:gsub("^%s+", ""):gsub("%s+$", "")
-
-	if content == "" then
-		return defaultValue
-	end
-
-	return content
-end
-
-local function writeStatus(value)
-	writefile(hopStatusFile, value)
 end
 
 local function appendLine(line)
@@ -129,131 +95,11 @@ local function logViciousState(viciousPath)
 	end
 end
 
-local function loadServerQueue()
-	local content = readTrimmedFile(serverQueueFile, "")
-	if content == "" then
-		return {}
-	end
-
-	local queue = {}
-
-	for line in string.gmatch(content, "[^\r\n]+") do
-		line = line:gsub("^%s+", ""):gsub("%s+$", "")
-		if line ~= "" then
-			table.insert(queue, line)
-		end
-	end
-
-	return queue
-end
-
-local function saveServerQueue(queue)
-	if #queue == 0 then
-		writefile(serverQueueFile, "")
-		return
-	end
-
-	writefile(serverQueueFile, table.concat(queue, "\n") .. "\n")
-end
-
-local function popNextServerId()
-	local queue = loadServerQueue()
-
-	if #queue == 0 then
-		return nil
-	end
-
-	local serverId = table.remove(queue, 1)
-	saveServerQueue(queue)
-	return serverId
-end
-
-local function teleportToServer(serverId)
-	local oldJobId = game.JobId
-	local failed = false
-
-	local connection = TeleportService.TeleportInitFailed:Connect(function(failedPlayer)
-		if failedPlayer == Player then
-			failed = true
-		end
-	end)
-
-	local success, result = pcall(function()
-		local teleportOptions = Instance.new("TeleportOptions")
-		teleportOptions.ServerInstanceId = serverId
-		TeleportService:TeleportAsync(PlaceId, { Player }, teleportOptions)
-	end)
-
-	if not success then
-		connection:Disconnect()
-		warn("[ FAIL ] TeleportAsync failed:", tostring(result))
-		writeStatus("teleport-failed:" .. serverId)
-		return false
-	end
-
-	local startedAt = os.clock()
-
-	while os.clock() - startedAt < Config.TeleportTimeout do
-		if failed then
-			connection:Disconnect()
-			writeStatus("teleport-failed:" .. serverId)
-			return false
-		end
-
-		if game.JobId ~= oldJobId then
-			connection:Disconnect()
-			writeStatus("teleport-success:" .. serverId)
-			return true
-		end
-
-		task.wait(0.25)
-	end
-
-	connection:Disconnect()
-	writeStatus("teleport-timeout:" .. serverId)
-	return false
-end
-
-local function maybeHop(viciousPath)
-	if viciousPath then
-		writeStatus("vicious-found")
-		return
-	end
-
-	if hopAttemptedForThisServer then
-		return
-	end
-
-	if os.clock() - serverEnteredAt < Config.ServerObservationSeconds then
-		return
-	end
-
-	local serverId = popNextServerId()
-	if not serverId then
-		writeStatus("queue-empty")
-		return
-	end
-
-	hopAttemptedForThisServer = true
-	print("[ OK ] Targeted queued hop:", serverId)
-	writeStatus("teleporting:" .. serverId)
-
-	local success = teleportToServer(serverId)
-	if not success then
-		task.wait(Config.TeleportRetryDelay)
-		hopAttemptedForThisServer = false
-	end
-end
-
-ensureFile(viciousFile, "Time,Vicious,Position,Server\n")
-ensureFile(serverQueueFile, "")
-ensureFile(hopStatusFile, "ready")
-writeStatus("ready")
+ensureLogFile()
 print("[ OK ] Monitoring Vicious state...")
 
 while true do
 	local viciousPath = getViciousPath()
 	logViciousState(viciousPath)
-	maybeHop(viciousPath)
 	task.wait(Config.CheckInterval)
 end
