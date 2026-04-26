@@ -78,7 +78,7 @@ local function logViciousState(viciousPath)
 	local vicious = viciousPath and "Yes" or "No"
 	local position = getObjectPosition(viciousPath)
 	local server = game.JobId
-	local logKey = table.concat({server, vicious, position}, "|")
+	local logKey = table.concat({server, vicious}, "|")
 
 	if logKey ~= lastLogKey then
 		appendLine(string.format("%s,%s,%s,%s", currentTime, vicious, position, server))
