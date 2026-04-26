@@ -51,6 +51,7 @@ local function readCommand()
 	end
 
 	content = content:gsub("^%s+", ""):gsub("%s+$", "")
+	content = content:gsub("^\239\187\191", "")
 	if content == "" then
 		return "idle"
 	end
@@ -189,6 +190,9 @@ local function handleCommand()
 
 		print("[ OK ] Targeted server hop requested:", serverId)
 		teleportToServer(serverId)
+	else
+		writeCommand("idle")
+		warn("[ FAIL ] Unknown hop command:", command)
 	end
 end
 
