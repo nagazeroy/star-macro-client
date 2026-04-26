@@ -161,10 +161,12 @@ end
 local function teleportToServer(serverId)
 	local oldJobId = game.JobId
 	local failed = false
+	local failedReason = "unknown"
 
-	local connection = TeleportService.TeleportInitFailed:Connect(function(failedPlayer)
+	local connection = TeleportService.TeleportInitFailed:Connect(function(failedPlayer, teleportResult, errorMessage)
 		if failedPlayer == Player then
 			failed = true
+			failedReason = tostring(errorMessage or teleportResult or "unknown")
 		end
 	end)
 
@@ -174,22 +176,28 @@ local function teleportToServer(serverId)
 
 	if not success then
 		connection:Disconnect()
-		writeStatus("teleport-failed:" .. serverId)
-		warn("[ FAIL ] TeleportAsync failed:", tostring(result))
+		failedReason = tostring(result)
+		writeStatus("teleport-failed:" .. serverId .. "|" .. failedReason)
+		writeError("teleport-failed|" .. serverId .. "|" .. failedReason)
+		warn("[ FAIL ] TeleportToPlaceInstance failed:", failedReason)
 		return false
 	end
 
 	local startedAt = os.clock()
 
 	while os.clock() - startedAt < Config.TeleportTimeout do
+		writeHeartbeat("teleporting:" .. serverId)
+
 		if failed then
 			connection:Disconnect()
-			writeStatus("teleport-failed:" .. serverId)
+			writeStatus("teleport-failed:" .. serverId .. "|" .. failedReason)
+			writeError("teleport-failed|" .. serverId .. "|" .. failedReason)
 			return false
 		end
 
 		if game.JobId ~= oldJobId then
 			connection:Disconnect()
+			writefile(errorFile, "")
 			writeStatus("teleport-success:" .. serverId)
 			return true
 		end
@@ -199,6 +207,7 @@ local function teleportToServer(serverId)
 
 	connection:Disconnect()
 	writeStatus("teleport-timeout:" .. serverId)
+	writeError("teleport-timeout|" .. serverId)
 	return false
 end
 
@@ -227,11 +236,11 @@ while true do
 		local didTeleport = handleTargetServer()
 
 		if didTeleport then
-			writeHeartbeat("teleporting")
 			return
 		end
 
 		logViciousState(viciousPath)
+		writefile(errorFile, "")
 		writeHeartbeat(viciousPath and "vicious" or "idle")
 	end)
 
