@@ -192,29 +192,33 @@ local function teleportToServer(serverId)
 	return false
 end
 
-local function handleTargetServer()
-	if getViciousPath() then
-		return
+local function handleTargetServer(viciousPath)
+	if viciousPath then
+		return false
 	end
 
 	local serverId = consumeTargetServer()
 	if not serverId then
-		return
+		return false
 	end
 
 	writeStatus("teleporting:" .. serverId)
 	teleportToServer(serverId)
+	return true
 end
 
 ensureFile(viciousFile, "Time,Vicious,Position,Server\n")
-ensureFile(targetServerFile, "")
+writefile(targetServerFile, "")
 ensureFile(statusFile, "ready")
 writefile(accountFile, username)
 writeStatus("ready")
 
 while true do
 	local viciousPath = getViciousPath()
-	logViciousState(viciousPath)
-	handleTargetServer()
+
+	if not handleTargetServer(viciousPath) then
+		logViciousState(viciousPath)
+	end
+
 	task.wait(Config.CheckInterval)
 end
