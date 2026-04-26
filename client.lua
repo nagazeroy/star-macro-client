@@ -193,6 +193,10 @@ local function teleportToServer(serverId)
 end
 
 local function handleTargetServer()
+	if getViciousPath() then
+		return
+	end
+
 	local serverId = consumeTargetServer()
 	if not serverId then
 		return
