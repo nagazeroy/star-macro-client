@@ -202,11 +202,7 @@ local function teleportToServer(serverId)
 	return false
 end
 
-local function handleTargetServer(viciousPath)
-	if viciousPath then
-		return false
-	end
-
+local function handleTargetServer()
 	local serverId = consumeTargetServer()
 	if not serverId then
 		return false
@@ -228,7 +224,7 @@ writeHeartbeat("ready")
 while true do
 	local success, errorMessage = pcall(function()
 		local viciousPath = getViciousPath()
-		local didTeleport = handleTargetServer(viciousPath)
+		local didTeleport = handleTargetServer()
 
 		if didTeleport then
 			writeHeartbeat("teleporting")
