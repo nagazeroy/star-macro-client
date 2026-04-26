@@ -26,6 +26,8 @@ local viciousFile = accountFolder .. "/vicious.txt"
 local targetServerFile = accountFolder .. "/target_server.txt"
 local statusFile = accountFolder .. "/status.txt"
 local accountFile = accountFolder .. "/account.txt"
+local heartbeatFile = accountFolder .. "/heartbeat.txt"
+local errorFile = accountFolder .. "/error.txt"
 
 local lastLogKey = nil
 local lastHandledTarget = nil
@@ -50,6 +52,14 @@ end
 
 local function writeStatus(value)
 	writefile(statusFile, value)
+end
+
+local function writeHeartbeat(state)
+	writefile(heartbeatFile, string.format("%s|%s|%s", os.date("%Y-%m-%d %H:%M:%S"), game.JobId, state))
+end
+
+local function writeError(message)
+	writefile(errorFile, string.format("%s|%s", os.date("%Y-%m-%d %H:%M:%S"), tostring(message)))
 end
 
 local function readTrimmedFile(path, defaultValue)
@@ -210,14 +220,28 @@ end
 ensureFile(viciousFile, "Time,Vicious,Position,Server\n")
 writefile(targetServerFile, "")
 ensureFile(statusFile, "ready")
+writefile(errorFile, "")
 writefile(accountFile, username)
 writeStatus("ready")
+writeHeartbeat("ready")
 
 while true do
-	local viciousPath = getViciousPath()
+	local success, errorMessage = pcall(function()
+		local viciousPath = getViciousPath()
+		local didTeleport = handleTargetServer(viciousPath)
 
-	if not handleTargetServer(viciousPath) then
+		if didTeleport then
+			writeHeartbeat("teleporting")
+			return
+		end
+
 		logViciousState(viciousPath)
+		writeHeartbeat(viciousPath and "vicious" or "idle")
+	end)
+
+	if not success then
+		writeStatus("loop-error")
+		writeError(errorMessage)
 	end
 
 	task.wait(Config.CheckInterval)
