@@ -3,8 +3,18 @@ local Config = {
 	TeleportTimeout = 8
 }
 
+local BeeSwarmSimulatorPlaceId = 1537690962
+
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
+
+if game.PlaceId ~= BeeSwarmSimulatorPlaceId then
+	warn(string.format(
+		"[ INFO ] star_macro.lua skipped because the current place is %s instead of %s.",
+		tostring(game.PlaceId),
+		tostring(BeeSwarmSimulatorPlaceId)))
+	return
+end
 
 local Player = Players.LocalPlayer
 if not Player then
