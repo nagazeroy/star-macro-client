@@ -1,7 +1,9 @@
 local Config = {
-	CheckInterval = 1
+	CheckInterval = 1,
+	TeleportTimeout = 8
 }
 
+local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 
 local Player = Players.LocalPlayer
@@ -10,8 +12,11 @@ if not Player then
 	Player = Players.LocalPlayer
 end
 
+local PlaceId = game.PlaceId
+
 local folderName = "star_macro"
 local viciousFile = folderName .. "/vicious.txt"
+local commandFile = folderName .. "/hop_control.txt"
 
 local lastLogKey = nil
 
@@ -23,6 +28,34 @@ local function ensureLogFile()
 	if not isfile(viciousFile) then
 		writefile(viciousFile, "Time,Vicious,Position,Server\n")
 	end
+end
+
+local function ensureCommandFile()
+	if not isfile(commandFile) then
+		writefile(commandFile, "idle")
+	end
+end
+
+local function writeCommand(value)
+	writefile(commandFile, value)
+end
+
+local function readCommand()
+	if not isfile(commandFile) then
+		return "idle"
+	end
+
+	local success, content = pcall(readfile, commandFile)
+	if not success or type(content) ~= "string" then
+		return "idle"
+	end
+
+	content = content:gsub("^%s+", ""):gsub("%s+$", "")
+	if content == "" then
+		return "idle"
+	end
+
+	return content
 end
 
 local function appendLine(line)
@@ -95,11 +128,77 @@ local function logViciousState(viciousPath)
 	end
 end
 
+local function teleportToServer(serverId)
+	local oldJobId = game.JobId
+	local failed = false
+
+	local connection = TeleportService.TeleportInitFailed:Connect(function(failedPlayer)
+		if failedPlayer == Player then
+			failed = true
+		end
+	end)
+
+	local success, result = pcall(function()
+		local teleportOptions = Instance.new("TeleportOptions")
+		teleportOptions.ServerInstanceId = serverId
+		TeleportService:TeleportAsync(PlaceId, { Player }, teleportOptions)
+	end)
+
+	if not success then
+		connection:Disconnect()
+		warn("[ FAIL ] TeleportAsync failed:", tostring(result))
+		return false
+	end
+
+	local startedAt = os.clock()
+
+	while os.clock() - startedAt < Config.TeleportTimeout do
+		if failed then
+			connection:Disconnect()
+			return false
+		end
+
+		if game.JobId ~= oldJobId then
+			connection:Disconnect()
+			return true
+		end
+
+		task.wait(0.25)
+	end
+
+	connection:Disconnect()
+	return false
+end
+
+local function handleCommand()
+	local command = readCommand()
+	local lowered = string.lower(command)
+
+	if lowered == "idle" then
+		return
+	end
+
+	local prefix = "target-server:"
+	if string.sub(lowered, 1, #prefix) == prefix then
+		local serverId = command:sub(#prefix + 1):gsub("^%s+", ""):gsub("%s+$", "")
+		writeCommand("idle")
+
+		if serverId == "" then
+			return
+		end
+
+		print("[ OK ] Targeted server hop requested:", serverId)
+		teleportToServer(serverId)
+	end
+end
+
 ensureLogFile()
+ensureCommandFile()
 print("[ OK ] Monitoring Vicious state...")
 
 while true do
 	local viciousPath = getViciousPath()
 	logViciousState(viciousPath)
+	handleCommand()
 	task.wait(Config.CheckInterval)
 end
