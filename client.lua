@@ -1,7 +1,9 @@
 local Config = {
-	CheckInterval = 1
+	CheckInterval = 1,
+	TeleportTimeout = 8
 }
 
+local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 
 local Player = Players.LocalPlayer
@@ -10,19 +12,64 @@ if not Player then
 	Player = Players.LocalPlayer
 end
 
-local folderName = "star_macro"
-local viciousFile = folderName .. "/vicious.txt"
-
-local lastLogKey = nil
-
-if not isfolder(folderName) then
-	makefolder(folderName)
+local function sanitizeFolderName(value)
+	return value:gsub('[<>:"/\\|%?%*]', "_")
 end
 
-local function ensureLogFile()
-	if not isfile(viciousFile) then
-		writefile(viciousFile, "Time,Vicious,Position,Server\n")
+local username = Player.Name
+local safeUsername = sanitizeFolderName(username)
+
+local rootFolder = "star_macro"
+local accountsFolder = rootFolder .. "/accounts"
+local accountFolder = accountsFolder .. "/" .. safeUsername
+local viciousFile = accountFolder .. "/vicious.txt"
+local targetServerFile = accountFolder .. "/target_server.txt"
+local statusFile = accountFolder .. "/status.txt"
+local accountFile = accountFolder .. "/account.txt"
+
+local lastLogKey = nil
+local lastHandledTarget = nil
+
+if not isfolder(rootFolder) then
+	makefolder(rootFolder)
+end
+
+if not isfolder(accountsFolder) then
+	makefolder(accountsFolder)
+end
+
+if not isfolder(accountFolder) then
+	makefolder(accountFolder)
+end
+
+local function ensureFile(path, defaultValue)
+	if not isfile(path) then
+		writefile(path, defaultValue)
 	end
+end
+
+local function writeStatus(value)
+	writefile(statusFile, value)
+end
+
+local function readTrimmedFile(path, defaultValue)
+	if not isfile(path) then
+		return defaultValue
+	end
+
+	local success, content = pcall(readfile, path)
+	if not success or type(content) ~= "string" then
+		return defaultValue
+	end
+
+	content = content:gsub("^\239\187\191", "")
+	content = content:gsub("^%s+", ""):gsub("%s+$", "")
+
+	if content == "" then
+		return defaultValue
+	end
+
+	return content
 end
 
 local function appendLine(line)
@@ -83,23 +130,89 @@ local function logViciousState(viciousPath)
 	if logKey ~= lastLogKey then
 		appendLine(string.format("%s,%s,%s,%s", currentTime, vicious, position, server))
 		lastLogKey = logKey
-		print("[ OK ] Vicious state written:", viciousFile)
-	end
-
-	if viciousPath then
-		print("[ OK ] Vicious found!")
-		print("[ OK ] Vicious position:", position)
-	else
-		print("[ OK ] Vicious not found!")
-		print("[ OK ] Vicious position: N/A")
 	end
 end
 
-ensureLogFile()
-print("[ OK ] Monitoring Vicious state...")
+local function consumeTargetServer()
+	local serverId = readTrimmedFile(targetServerFile, "")
+	if serverId == "" then
+		return nil
+	end
+
+	if serverId == lastHandledTarget then
+		return nil
+	end
+
+	writefile(targetServerFile, "")
+	lastHandledTarget = serverId
+	return serverId
+end
+
+local function teleportToServer(serverId)
+	local oldJobId = game.JobId
+	local failed = false
+
+	local connection = TeleportService.TeleportInitFailed:Connect(function(failedPlayer)
+		if failedPlayer == Player then
+			failed = true
+		end
+	end)
+
+	local success, result = pcall(function()
+		local teleportOptions = Instance.new("TeleportOptions")
+		teleportOptions.ServerInstanceId = serverId
+		TeleportService:TeleportAsync(game.PlaceId, { Player }, teleportOptions)
+	end)
+
+	if not success then
+		connection:Disconnect()
+		writeStatus("teleport-failed:" .. serverId)
+		warn("[ FAIL ] TeleportAsync failed:", tostring(result))
+		return false
+	end
+
+	local startedAt = os.clock()
+
+	while os.clock() - startedAt < Config.TeleportTimeout do
+		if failed then
+			connection:Disconnect()
+			writeStatus("teleport-failed:" .. serverId)
+			return false
+		end
+
+		if game.JobId ~= oldJobId then
+			connection:Disconnect()
+			writeStatus("teleport-success:" .. serverId)
+			return true
+		end
+
+		task.wait(0.25)
+	end
+
+	connection:Disconnect()
+	writeStatus("teleport-timeout:" .. serverId)
+	return false
+end
+
+local function handleTargetServer()
+	local serverId = consumeTargetServer()
+	if not serverId then
+		return
+	end
+
+	writeStatus("teleporting:" .. serverId)
+	teleportToServer(serverId)
+end
+
+ensureFile(viciousFile, "Time,Vicious,Position,Server\n")
+ensureFile(targetServerFile, "")
+ensureFile(statusFile, "ready")
+writefile(accountFile, username)
+writeStatus("ready")
 
 while true do
 	local viciousPath = getViciousPath()
 	logViciousState(viciousPath)
+	handleTargetServer()
 	task.wait(Config.CheckInterval)
 end
