@@ -1,3 +1,5 @@
+print("[ CLIENT ] : Autoexec Script loaded")
+
 local Config = {
 	CheckInterval = 1,
 	TeleportTimeout = 8
@@ -10,7 +12,7 @@ local Players = game:GetService("Players")
 
 if game.PlaceId ~= BeeSwarmSimulatorPlaceId then
 	warn(string.format(
-		"[ INFO ] star_macro.lua skipped because the current place is %s instead of %s.",
+		"[ CLIENT ] star_macro.lua skipped because the current place is %s instead of %s.",
 		tostring(game.PlaceId),
 		tostring(BeeSwarmSimulatorPlaceId)))
 	return
