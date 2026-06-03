@@ -1,5 +1,4 @@
-print("[ CLIENT ] : Autoexec Script loaded")
-
+print("[ STAR MCRO ] Loaded Scipt !")
 local Config = {
 	CheckInterval = 1,
 	TeleportTimeout = 8
@@ -12,7 +11,7 @@ local Players = game:GetService("Players")
 
 if game.PlaceId ~= BeeSwarmSimulatorPlaceId then
 	warn(string.format(
-		"[ CLIENT ] star_macro.lua skipped because the current place is %s instead of %s.",
+		"[ INFO ] star_macro.lua skipped because the current place is %s instead of %s.",
 		tostring(game.PlaceId),
 		tostring(BeeSwarmSimulatorPlaceId)))
 	return
@@ -35,13 +34,15 @@ local rootFolder = "star_macro"
 local accountsFolder = rootFolder .. "/accounts"
 local accountFolder = accountsFolder .. "/" .. safeUsername
 local viciousFile = accountFolder .. "/vicious.txt"
+local windyFile = accountFolder .. "/windy.txt"
 local targetServerFile = accountFolder .. "/target_server.txt"
 local statusFile = accountFolder .. "/status.txt"
 local accountFile = accountFolder .. "/account.txt"
 local heartbeatFile = accountFolder .. "/heartbeat.txt"
 local errorFile = accountFolder .. "/error.txt"
+local trackedNpcFile = rootFolder .. "/tracked_npcs.txt"
 
-local lastLogKey = nil
+local lastLogKeys = {}
 local lastHandledTarget = nil
 
 if not isfolder(rootFolder) then
@@ -94,18 +95,18 @@ local function readTrimmedFile(path, defaultValue)
 	return content
 end
 
-local function appendLine(line)
+local function appendLine(path, line)
 	if appendfile then
-		appendfile(viciousFile, line .. "\n")
+		appendfile(path, line .. "\n")
 	else
 		local previous = ""
-		if isfile(viciousFile) then
-			previous = readfile(viciousFile)
+		if isfile(path) then
+			previous = readfile(path)
 			if previous ~= "" and string.sub(previous, -1) ~= "\n" then
 				previous = previous .. "\n"
 			end
 		end
-		writefile(viciousFile, previous .. line .. "\n")
+		writefile(path, previous .. line .. "\n")
 	end
 end
 
@@ -116,6 +117,15 @@ local function getViciousPath()
 	end
 
 	return particles:FindFirstChild("Vicious")
+end
+
+local function getWindyPath()
+	local npcBees = workspace:FindFirstChild("NPCBees")
+	if not npcBees then
+		return nil
+	end
+
+	return npcBees:FindFirstChild("Windy")
 end
 
 local function getObjectPosition(instance)
@@ -142,16 +152,37 @@ local function getObjectPosition(instance)
 	return "N/A"
 end
 
-local function logViciousState(viciousPath)
-	local currentTime = os.date("%Y-%m-%d %H:%M:%S")
-	local vicious = viciousPath and "Yes" or "No"
-	local position = getObjectPosition(viciousPath)
-	local server = game.JobId
-	local logKey = table.concat({server, vicious}, "|")
+local function getTrackedNpcs()
+	local tracked = {
+		vicious = false,
+		windy = false
+	}
 
-	if logKey ~= lastLogKey then
-		appendLine(string.format("%s,%s,%s,%s", currentTime, vicious, position, server))
-		lastLogKey = logKey
+	local value = readTrimmedFile(trackedNpcFile, "vicious,windy")
+	for token in string.gmatch(string.lower(value), "[^,%s]+") do
+		if token == "vicious" or token == "windy" then
+			tracked[token] = true
+		end
+	end
+
+	if not tracked.vicious and not tracked.windy then
+		tracked.vicious = true
+		tracked.windy = true
+	end
+
+	return tracked
+end
+
+local function logNpcState(kind, path, instance)
+	local currentTime = os.date("%Y-%m-%d %H:%M:%S")
+	local state = instance and "Yes" or "No"
+	local position = getObjectPosition(instance)
+	local server = game.JobId
+	local logKey = table.concat({kind, server, state}, "|")
+
+	if logKey ~= lastLogKeys[kind] then
+		appendLine(path, string.format("%s,%s,%s,%s", currentTime, state, position, server))
+		lastLogKeys[kind] = logKey
 	end
 end
 
@@ -234,7 +265,9 @@ local function handleTargetServer()
 	return true
 end
 
-ensureFile(viciousFile, "Time,Vicious,Position,Server\n")
+ensureFile(viciousFile, "Time,State,Position,Server\n")
+ensureFile(windyFile, "Time,State,Position,Server\n")
+ensureFile(trackedNpcFile, "vicious,windy")
 writefile(targetServerFile, "")
 ensureFile(statusFile, "ready")
 writefile(errorFile, "")
@@ -244,16 +277,37 @@ writeHeartbeat("ready")
 
 while true do
 	local success, errorMessage = pcall(function()
+		local trackedNpcs = getTrackedNpcs()
 		local viciousPath = getViciousPath()
+		local windyPath = getWindyPath()
 		local didTeleport = handleTargetServer()
 
 		if didTeleport then
 			return
 		end
 
-		logViciousState(viciousPath)
+		if trackedNpcs.vicious then
+			logNpcState("vicious", viciousFile, viciousPath)
+		end
+
+		if trackedNpcs.windy then
+			logNpcState("windy", windyFile, windyPath)
+		end
+
 		writefile(errorFile, "")
-		writeHeartbeat(viciousPath and "vicious" or "idle")
+
+		local heartbeatStates = {}
+		if trackedNpcs.vicious and viciousPath then
+			table.insert(heartbeatStates, "vicious")
+		end
+		if trackedNpcs.windy and windyPath then
+			table.insert(heartbeatStates, "windy")
+		end
+		if #heartbeatStates == 0 then
+			table.insert(heartbeatStates, "idle")
+		end
+
+		writeHeartbeat(table.concat(heartbeatStates, "+"))
 	end)
 
 	if not success then
