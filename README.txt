@@ -1,4 +1,1 @@
-Star macro Client System
----
-Host:
-https://github.com/nagazeroy/star-macro/
+Star macro Client Script
